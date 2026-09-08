@@ -1,9 +1,5 @@
 # OPERATIONS — управление системой MoMedA_EnData
 
-Все команды выполняются из корня проекта `/home/sgv/Desktop/Dev/AI_Dev/MoMedA_EnData`.
-Python — всегда `.venv/bin/python` (общее окружение AI_Dev, симлинк в корне).
-GPU — одна RTX 3090: **никогда не запускайте обучение и сервер одновременно**
-(совокупная VRAM превышает 24 ГБ; первым упадёт то, что грузится вторым).
 
 ---
 
@@ -36,14 +32,10 @@ MOMEDA_TRANSLATOR_TTL=600 nohup .venv/bin/python -m inference.server --port 8010
 ### Остановка
 
 ```bash
-kill $(pgrep -f "python -m inference.server")        # мягко
+kill $(pgrep -f "python -m inference.server")
 kill -9 <PID>                                        # если не помогло
 pgrep -f "inference.server" || echo "остановлен"     # проверка
 ```
-
-⚠️ Не пишите `pkill -f "inference.server"` в составной команде, где этим же
-запускается сервер или упоминается этот текст — pkill убьёт собственную
-оболочку по самосовпадению паттерна. Останавливайте по PID отдельной командой.
 
 ### Проверка состояния
 
@@ -107,10 +99,9 @@ curl -s 'localhost:8010/api/translate?direction=ru2en' -H 'Content-Type: applica
 
 ## 2. Мониторинг
 
-- `~/bin/sysmon` — TUI: GPU, ML-процессы с прогресс-барами и ETA, спарклайны,
-  сервер рендерится по своему `/api/health`. `sysmon --once` — один кадр.
+
 - `tail -f server.log` — access-лог и трейсбеки сервера.
-- `nvidia-smi` — кто держит VRAM.
+
 - Счётчик обработанных случаев: `grep -c "POST /api/case" server.log`.
 
 ---
@@ -141,7 +132,7 @@ bash scripts/unify_agents.sh
 `--engine unsloth|transformers`. Модели пишутся в `models/<run-name>/`,
 логи — `runs/<run-name>/`, время — от 6 минут (Проктолог) до ~2.5 ч (Терапевт).
 
-⚠️ Перед обучением остановите сервер (см. раздел 1). После падения по OOM —
+⚠️ Перед обучением остановить сервер (см. раздел 1). После падения по OOM —
 перезапустите с теми же аргументами и `--resume`.
 
 Откат агента на v1: `mv models/med-spec-<slug>-3b models/med-spec-<slug>-3b-v2 && mv models/backup_v1/med-spec-<slug>-3b models/`.
@@ -209,5 +200,4 @@ models/          ~87 ГБ (в git не входит): роутеры, масте
 data/raw/en/     ~1.1 ГБ источников (не в git)
 data/specialties|router|chief/   регенерируемые наборы (не в git)
 runs/            отчёты и сырые ответы оценок (в git)
-.git/            ~47 МБ
 ```
