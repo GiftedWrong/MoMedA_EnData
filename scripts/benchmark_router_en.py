@@ -1,22 +1,5 @@
 #!/usr/bin/env python
-"""Бенчмарк EN-роутера (14 классов) + диагностика данных через него.
-
-На test.jsonl (846 примеров с полями label/source):
-  - строгая точность: ответ строго «Рекомендуемый специалист: <Класс>.»;
-  - мягкая: класс извлекается regex/вхождением;
-  - разрез точности по классам × источникам текста (medmcqa / mtsamples /
-    ddxplus / hcm_pseudo) — классы с провалом по hcm_pseudo указывают на
-    шум словарной разметки;
-  - топ-парные путаницы (матрица ошибок): кого с кем путает.
-
-Дополнительно (--usmle N): роутер псевдо-размечает N USMLE-виньеток
-MedQA → data/processed/usmle_pseudo_labeled.jsonl (внешний eval-набор
-для агентов-специалистов).
-
-Запуск:
-  python scripts/benchmark_router_en.py --model models/med-router-en-3b
-  python scripts/benchmark_router_en.py --model models/med-router-en-3b --usmle 2000
-"""
+"""Тест роутера: точность по классам и источникам, путаницы."""
 from __future__ import annotations
 
 import argparse

@@ -1,4 +1,4 @@
-"""Общие утилиты скриптов MoMedA_ChData."""
+"""Мелкие общие помощники для всех скриптов."""
 from __future__ import annotations
 
 import hashlib
@@ -14,7 +14,7 @@ def load_config() -> dict:
     try:
         import yaml  # type: ignore
     except ImportError:
-        # минимальный парсер «key: value», если PyYAML недоступен
+        # запасной парсер «key: value», если yaml не стоит
         cfg = {}
         for line in (PROJECT_ROOT / "config.yaml").read_text(encoding="utf-8").splitlines():
             line = line.strip()

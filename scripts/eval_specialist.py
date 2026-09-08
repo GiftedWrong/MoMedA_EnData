@@ -1,17 +1,5 @@
 #!/usr/bin/env python
-"""Оценка агента-специалиста на его тестовом наборе (+USMLE-виньетки).
-
-Для каждой тестовой виньетки/вопроса: greedy-генерация, затем метрики:
-  - format_ok: в ответе есть блок «### Предварительный диагноз»;
-  - lang_pure: в ответе нет кириллицы и CJK (кроме русских маркеров блоков);
-  - mcq_acc: для виньеток с answer_letters — точное совпадение буквы ответа;
-  - сэмплы «вопрос → ответ» для ручного просмотра.
-
-Запуск:
-  python scripts/eval_specialist.py --specialty Терапевт
-  python scripts/eval_specialist.py --specialty Невролог --limit 50 \
-      --usmle data/processed/usmle_pseudo_labeled.jsonl
-"""
+"""Оценка агента: формат, чистота EN, MCQ-точность; опционально USMLE."""
 from __future__ import annotations
 
 import argparse

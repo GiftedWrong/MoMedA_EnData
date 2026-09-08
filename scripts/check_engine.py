@@ -1,10 +1,4 @@
-"""Самотест движка обучения: unsloth, один микрошаг forward+backward.
-
-Запускается в отдельном процессе (import unsloth необратимо патчит
-transformers в текущем процессе). Код возврата 0 — движок работоспособен.
-
-Запуск: python scripts/check_engine.py
-"""
+"""Проверяем unsloth одним микрошагом. Отдельный процесс: import unsloth патчит всё вокруг."""
 import os
 import sys
 

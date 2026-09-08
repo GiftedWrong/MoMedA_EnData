@@ -2,7 +2,7 @@
 # Унификация агентов: перегенерация наборов с --uniform-format (консультации
 # получают блок «### Предварительный диагноз») и переобучение 7 hcm-тяжёлых
 # специалистов. v1-модели бэкапятся в models/backup_v1/.
-cd /home/sgv/Desktop/Dev/AI_Dev/MoMedA_ChData || exit 1
+cd /home/sgv/Desktop/Dev/AI_Dev/MoMedA_EnData || exit 1
 PROG=train_uniform_progress.log
 echo "=== УНИФИКАЦИЯ старт $(date '+%F %T')" >> "$PROG"
 

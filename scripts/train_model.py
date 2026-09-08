@@ -1,19 +1,5 @@
 #!/usr/bin/env python
-"""Единый тренер MoMedA_ChData: EN-роутер и агенты-специалисты.
-
-Полный файнтюн Qwen2.5-3B-Instruct (unsloth с откатом на transformers),
-ChatML-токенизация, лосс только по ответу ассистента (labels=-100 вне его).
-Рецепт и гиперпараметры — отработанный train.py соседнего проекта
-AI_Dev_Qwen2.5-3B_Diagnosis-training (модели med-cot-3b / med-routing-3b).
-
-Цели (--data | --specialty, ровно одна):
-  --data data/router          EN-роутер, 14 классов  -> models/med-router-en-3b
-  --specialty Терапевт        агент-специалист       -> models/med-spec-<slug>-3b
-
-Запуск:
-  python scripts/train_model.py --data data/router
-  python scripts/train_model.py --specialty Терапевт [--epochs 1]
-"""
+"""Единый тренер: роутер, агенты, мастер — unsloth, полный файнтюн."""
 from __future__ import annotations
 
 import argparse
@@ -43,9 +29,7 @@ os.environ.setdefault("UNSLOTH_COMPILE_LOCATION",
 
 HP = {
     "router": {"max_len": 1024, "epochs": 2.0, "batch": 2, "accum": 8, "lr": 2e-5},
-    # batch 1×accum 16 (рецепт cot соседнего проекта): при max_len 2048 батч из
-    # двух длинных примеров даёт пик логитов ~1.2 ГБ и OOM на 24 ГБ карте —
-    # Отоларинголог упал на 230/268 шаге 2026-09-06
+    # batch 1×accum 16: при max_len 2048 два длинных примера в батче ловят OOM
     "specialty": {"max_len": 2048, "epochs": 1.0, "batch": 1, "accum": 16, "lr": 2e-5},
 }
 
@@ -150,7 +134,7 @@ def resolve_target(args) -> tuple[str, Path, Path, str]:
     if args.data:
         d = project_path(args.data)
         if "chief" in str(d).lower():
-            # мастер-агент: длинные примеры — гиперпараметры как у специалистов
+            # мастер: примеры длинные — гиперпараметры как у специалистов
             return "specialty", d / "train.jsonl", d / "val.jsonl", "med-chief-3b"
         return "router", d / "train.jsonl", d / "val.jsonl", "med-router-en-3b"
     spec = BY_NAME.get(args.specialty)

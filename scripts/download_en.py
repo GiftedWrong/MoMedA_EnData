@@ -1,26 +1,5 @@
 #!/usr/bin/env python
-"""Шаг 1. Скачивание англоязычных источников в data/raw/en/ и печать их схем.
-
-Источники (v2, англоязычная ветка):
-  medmcqa   — openlifescienceai/medmcqa (Apache-2.0), ~183k экзаменационных
-              виньеток с объяснениями; метки subject_name (21 предмет) и
-              topic_name (~2400 тем) — основа разбиения по специалистам;
-  mtsamples — tchebonenko/MedicalTranscriptions (CC0, зеркало Kaggle
-              tboyle10/medicaltranscriptions), 4 999 реальных клинических
-              заметок с метками ~40 специальностей — для роутера;
-  medquad   — git clone abachaa/MedQuAD (NLM/NIH), 47 457 QA с 12 сайтов NIH;
-              подмножество NCI (cancer.gov) ~13k — онколог;
-  medqa     — GBaker/MedQA-USMLE-4-options (CC-BY 4.0), 11.4k клинических
-              виньеток — eval-резерв;
-  hcm       — lavita/ChatDoctor-HealthCareMagic-100k, 100k реальных
-              консультаций; ЯВНОЙ ЛИЦЕНЗИИ НЕТ — только исследование;
-  ddxplus   — aai530-group6/ddxplus (CC-BY), 1.3M синтетических пациентов:
-              evidences + дифдиагнозы — аугментация роутера, резерв
-              главного агента. Тяжёлый — качать отдельно: --source ddxplus.
-
-Идемпотентен; после скачивания печатает схемы и распределения, пишет
-data/raw/en/SCHEMAS.md и data/raw/en/SOURCES.md.
-"""
+"""Скачиваем источники в data/raw/en/ и показываем их схемы."""
 from __future__ import annotations
 
 import argparse

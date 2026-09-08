@@ -1,17 +1,9 @@
 #!/usr/bin/env python
-"""Шаг 2. Единый источник соответствий «английская метка → специалист» (ветка v2, EN).
+"""Все соответствия «метка источника → специалист» живут здесь.
 
-14 специалистов = 12 классов маршрутизатора + Педиатр + Онколог.
-
-Соответствия выверены по фактическим данным (data/raw/en/SCHEMAS.md):
-  - MedMCQA: subject_name (21 предмет) — 9 специальностей напрямую;
-    topic_name (2 389 тем) — Уролог, Гастроэнтеролог, Онколог, Проктолог,
-    Невролог (темы приоритетнее предмета);
-  - MTSamples: medical_specialty (~40 значений) — для роутера;
-  - DDXPlus: PATHOLOGY из 49 болезней — ключевые слова + дефолт Терапевт
-    (для роутера);
-  - HealthCareMagic-100k: словарная псевдо-разметка для добора
-    (Проктолог и др.).
+14 классов = 12 роутера + Педиатр и Онколог. Таблицы сверены с реальными
+данными (data/raw/en/SCHEMAS.md): предмет MedMCQA даёт 9 классов напрямую,
+тема — ещё 5; MTSamples и DDXPlus идут роутеру, HCM размечаем словарями.
 """
 from __future__ import annotations
 
@@ -46,11 +38,7 @@ SPECIALTIES: tuple[Specialty, ...] = (
 BY_NAME: dict[str, Specialty] = {s.name: s for s in SPECIALTIES}
 BY_SLUG: dict[str, Specialty] = {s.slug: s for s in SPECIALTIES}
 
-# --- MedMCQA -------------------------------------------------------------------
-# Предмет → специалист по умолчанию (только клинические предметы;
-# базовые (Anatomy, Physiology, Pharmacology, Pathology, Biochemistry,
-# Microbiology, Forensic, Social & Preventive, Radiology, Anaesthesia,
-# Unknown) не мапятся и попадают в отчёт).
+# --- MedMCQA: предмет → класс (базовые науки не мапим, они уходят в отчёт) ---
 SUBJECT_MAP: dict[str, str] = {
     "Medicine": "Терапевт",
     "Surgery": "Хирург",
@@ -63,9 +51,7 @@ SUBJECT_MAP: dict[str, str] = {
     "Orthopaedics": "Травматолог",
 }
 
-# Темы приоритетнее предмета. Порядок важен: частное раньше общего,
-# онкология раньше предметных дефолтов, проктология раньше гастро.
-# "_clinical_only" — применять только к клиническим предметам.
+# Тема сильнее предмета. Порядок: частное раньше общего, онко раньше дефолтов.
 CLINICAL_SUBJECTS = set(SUBJECT_MAP) | {"Psychiatry", "Unknown"}
 
 _TOPIC_RULES: list[tuple[re.Pattern, str, bool]] = [

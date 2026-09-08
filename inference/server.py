@@ -1,18 +1,12 @@
 #!/usr/bin/env python
-"""Инференс-сервер MoMedA v1: «RU случай → RU ответ».
+"""Инференс-сервер: RU случай → RU ответ.
 
-Перевод — только на границе системы: вход (сообщение RU→EN) и выход
-(итог EN→RU). Внутри конвейер на английском: роутер (резидент) →
-агент-специалист (lazy, LRU=1) → слот мастер-агента (v1: проход базовой
-Qwen «оформление + перевод» одной генерацией; v2: обученный med-chief-3b).
+Перевод только на границах: вход RU→EN (MiLMMT), выход EN→RU (base Qwen).
+Внутри всё на английском: роутер → агент → мастер (med-chief-3b, при его
+отсутствии — проход базовой Qwen). Qwen-переводчик транзиентный: грузится
+на шаг и сразу выгружается; --translator-ttl задаёт окно кэша по простою.
 
-Переводчик транзиентный: грузится на переводный шаг, сразу освобождает
-VRAM (del + empty_cache), повторный вызов перезагружает. --translator-ttl
-(сек, по умолчанию 0 — строгая выгрузка) задаёт окно кэширования по простою.
-
-Запуск из корня проекта:
-  .venv/bin/uvicorn inference.server:app --port 8010
-  .venv/bin/python -m inference.server --port 8010
+Запуск: .venv/bin/python -m inference.server --port 8010
 """
 from __future__ import annotations
 
@@ -52,10 +46,9 @@ MILMMT_MODEL = Path("/home/sgv/Desktop/Dev/AI_Dev/models/MiLMMT-46-1B")
 
 
 class MilmmtTranslator:
-    """MiLMMT-46-1B — входная граница RU→EN: лучший из протестированных
-    («stool»/«prescribed»/термины верно; ~2 ГБ, ~1–2 с на свободной GPU).
-    Сырой промпт без чат-ролей (формат из карточки модели). Выходная граница
-    ему не подходит (ломает структуру) — выход за Qwen."""
+    """MiLMMT-1B — вход RU→EN: лучшее качество из протестированного.
+    Сырой промпт без чат-ролей (формат из карточки). Выход не доверяем:
+    ломает структуру — там работает Qwen."""
 
     def __init__(self):
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -178,10 +171,8 @@ def vram_used_mb() -> int:
 # ---------------------------------------------------------------- модели
 
 def _load_vanilla(path: str):
-    """Загрузка чистым transformers. Вся inference-сторона обязана обходиться
-    без import unsloth: он глобально патчит классы моделей — повторные
-    загрузки и смешивание экземпляров падают (illegal memory access,
-    AttributeError apply_qkv). unsloth остаётся только в train_model.py."""
+    """Грузим чистым transformers. unsloth здесь запрещён: патчит классы
+    глобально, и повторные загрузки падают. Он живёт только в тренере."""
     from transformers import AutoModelForCausalLM, AutoTokenizer
     tok = AutoTokenizer.from_pretrained(path)
     model = AutoModelForCausalLM.from_pretrained(path, dtype=torch.bfloat16)
@@ -190,9 +181,8 @@ def _load_vanilla(path: str):
 
 
 class NllbTranslator:
-    """NLLB-600M — резидентный переводчик входной границы (RU→EN, ~1.2 ГБ,
-    ~0.3 с). Для выходной границы не подходит: портит структуру и термины
-    («Reasoning»→«Разумство», «groin»→«локоть») — выход остаётся за Qwen."""
+    """NLLB-600M — запасной входной переводчик, если MiLMMT не завёлся.
+    Выход тоже портит («Reasoning»→«Разумство») — только вход."""
 
     LANGS = {"ru2en": ("rus_Cyrl", "eng_Latn"), "en2ru": ("eng_Latn", "rus_Cyrl")}
 
@@ -437,8 +427,7 @@ def case(req: CaseIn):
                       "vram_after_mb": vram_used_mb()})
         return result
 
-    # 1. ГРАНИЦА-ВХОД: RU→EN. Резидентный MT (MiLMMT/NLLB, ~1–2 с); фолбэк —
-    # локальный Qwen (транзиентно, с выгрузкой: 4 модели сразу не влезают).
+    # 1. Вход: RU→EN резидентным MT; не завёлся — Qwen с выгрузкой после.
     def _translate_in():
         if HUB.input_mt is not None:
             try:
@@ -482,8 +471,7 @@ def case(req: CaseIn):
 
     # 4. Слот мастер-агента: v2 — med-chief-3b (обученный синтез); v1 — проход
     # базовой Qwen «оформление+перевод» (пока chief не обучен).
-    # ВАЖНО: агента выгружаем ДО загрузки chief — empty_cache после загрузки
-    # модели ломает triton-ядра unsloth (illegal memory access при генерации).
+    # Агента выгружаем ДО загрузки мастера — иначе не влезаем по VRAM.
     with HUB.gpu_lock:
         HUB.release_agent()
     if HUB.ensure_chief():

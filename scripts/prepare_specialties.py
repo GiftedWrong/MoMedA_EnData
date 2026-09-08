@@ -1,21 +1,5 @@
 #!/usr/bin/env python
-"""Шаг 3. Чистка, разбиение по 14 специалистам и экспорт в формат обучения (EN-ветка).
-
-Вход (data/raw/en/):
-  medmcqa/  — виньетки с вариантами и объяснениями (exp, 88%), метки
-              subject_name/topic_name;
-  medquad/  — XML QA с NIH-сайтов; 1_CancerGov_QA (~13k) — онкология;
-  hcm/      — HealthCareMagic-100k, словарная псевдо-разметка для добора
-              (Невролог, Уролог, Гастроэнтеролог, Онколог, Проктолог).
-
-Выход:
-  data/specialties/<Спец>/{train,val,test}.jsonl — messages-формат;
-  data/processed/<Спец>/pool.jsonl — чистые пулы с метаданными источников;
-  data/processed/REPORT.md — покрытие, доли объяснений, тонкие классы.
-
-Целевой объём --per-specialty N (по умолчанию 4000 ≈ 40 минут обучения при
-1 эпохе на RTX 3090). Приоритет источников: MedMCQA → MedQuAD → HCM-псевдо.
-"""
+"""Готовим наборы 14 специалистов: чистка, разбиение, экспорт в messages-формат."""
 from __future__ import annotations
 
 import argparse

@@ -2,7 +2,7 @@
 # Последовательное обучение всех 14 специалистов на максимальном объёме
 # и бенчмарк каждого сразу после обучения. Логи: train_<Спец>.log /
 # eval_<Спец>.log; прогресс очереди: train_all_progress.log
-cd /home/sgv/Desktop/Dev/AI_Dev/MoMedA_ChData || exit 1
+cd /home/sgv/Desktop/Dev/AI_Dev/MoMedA_EnData || exit 1
 PROG=train_all_progress.log
 echo "=== СТАРТ ОЧЕРЕДИ $(date '+%F %T')" >> "$PROG"
 
