@@ -1,0 +1,11 @@
+.venv
+.zcode
+__pycache__/
+*.pyc
+*.log
+models/
+data/raw/
+data/specialties/
+data/router/
+data/chief/
+data/processed/pool.jsonl

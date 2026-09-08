@@ -1,0 +1,13 @@
+# Конфигурация проекта MoMedA_ChData (v2, англоязычная ветка).
+# Относительные пути разрешаются от корня проекта (папки, содержащей этот файл).
+
+# Базовая модель для фулл-файнтюна роутера и специалистов
+base_model: ../models/Qwen2.5-3B-Instruct
+
+# Артефакты данных
+data_raw: data/raw
+data_processed: data/processed
+data_specialties: data/specialties
+data_router: data/router
+models_dir: models
+runs_dir: runs
