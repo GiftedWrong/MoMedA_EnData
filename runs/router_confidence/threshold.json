@@ -1,0 +1,8 @@
+{
+  "margin_ln": 0.08,
+  "consult_share": 0.274,
+  "coverage": 0.8425,
+  "top1": 0.7626,
+  "recall2": 0.8893,
+  "n": 876
+}

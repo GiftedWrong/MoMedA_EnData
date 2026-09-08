@@ -11,3 +11,8 @@ data_specialties: data/specialties
 data_router: data/router
 models_dir: models
 runs_dir: runs
+
+# Консилиум: порог лог-шансов ln(p1/p2) роутера — при марже ниже порога
+# вызываются top-1 и top-2 специалисты (0 = выключено).
+# Калибровка: data/processed/ROUTER_CONFIDENCE.md (27% консилиумов, +8 п.п.)
+consult_margin: 0.08

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import math
 import os
 import re
 import subprocess
@@ -87,6 +88,12 @@ TRANSLATE_OUT = (
 
 CLASSES = [s.name for s in SPECIALTIES]
 ROUTE_RE = re.compile(r"Рекомендуемый\s+специалист\s*:\s*([^\n.]+)")
+
+# Консилиум: порог лог-шансов ln(p1/p2) роутера — при марже ниже порога
+# вызываются top-1 и top-2 специалисты. 0 = выключено. Калибровка:
+# data/processed/ROUTER_CONFIDENCE.md; env перекрывает config.yaml.
+CONSULT_MARGIN = float(os.environ.get("MOMEDA_CONSULT_MARGIN",
+                                      CFG.get("consult_margin") or 0))
 
 ROUTER_SYSTEM = (
     "You are a medical triage router. Read the patient case in English and select "
@@ -323,6 +330,44 @@ def extract_specialty(text: str) -> str | None:
     return None
 
 
+@torch.inference_mode()
+def score_specialties(case_en: str) -> tuple[str, str, float]:
+    """Скоринг 14 классов на резидентном роутере: teacher forcing кандидатов
+    «Рекомендуемый специалист: <Класс>.», средний logprob/токен. Возвращает
+    (top-1, top-2, ln(p1/p2)) — ln-маржа равна разности logprob, softmax не
+    нужен. Вызывать под gpu_lock; ~0.5 с на кейс."""
+    tok = HUB.router_tok
+    prompt = tok.apply_chat_template(
+        [{"role": "system", "content": ROUTER_SYSTEM},
+         {"role": "user", "content": case_en}],
+        tokenize=False, add_generation_prompt=True)
+    prompt_ids = tok(prompt, add_special_tokens=False, return_tensors="pt")["input_ids"]
+    plen = prompt_ids.shape[1]
+    seqs = [torch.cat([prompt_ids,
+                       tok(f"Рекомендуемый специалист: {c}.", add_special_tokens=False,
+                           return_tensors="pt")["input_ids"]], dim=1)
+            for c in CLASSES]
+    width = max(s.shape[1] for s in seqs)
+    pad = tok.pad_token_id if tok.pad_token_id is not None else (tok.eos_token_id or 0)
+    input_ids = torch.full((len(seqs), width), pad, dtype=torch.long)
+    attn = torch.zeros((len(seqs), width), dtype=torch.long)
+    for i, s in enumerate(seqs):
+        input_ids[i, : s.shape[1]] = s[0]
+        attn[i, : s.shape[1]] = 1
+    input_ids, attn = input_ids.to("cuda"), attn.to("cuda")
+    logits = HUB.router(input_ids, attention_mask=attn).logits
+    mean_lp = []
+    for i, s in enumerate(seqs):
+        clen = s.shape[1] - plen
+        # токены кандидата [plen, plen+clen) предсказываются позициями [plen-1, plen+clen-1)
+        step = logits[i, plen - 1: plen - 1 + clen].float()
+        lsm = torch.log_softmax(step, dim=-1)
+        tgt = input_ids[i, plen: plen + clen]
+        mean_lp.append(lsm.gather(-1, tgt.unsqueeze(-1)).mean().item())
+    i1, i2 = sorted(range(len(CLASSES)), key=lambda i: -mean_lp[i])[:2]
+    return CLASSES[i1], CLASSES[i2], mean_lp[i1] - mean_lp[i2]
+
+
 # ---------------------------------------------------------------- приложение
 
 class CaseIn(BaseModel):
@@ -357,6 +402,7 @@ def health():
     return {
         "status": "ok",
         "router": os.path.basename(ROUTER_MODEL),
+        "consult_margin": CONSULT_MARGIN,
         "input_mt": getattr(HUB, "input_mt_name", "Qwen(fallback)"),
         "chief": ("loaded" if HUB.chief is not None
                   else "available" if CHIEF_AVAILABLE else "not_trained"),
@@ -444,7 +490,7 @@ def case(req: CaseIn):
                 HUB.translator.release(force=True)
     case_en = step("translate_ru2en", _translate_in)
 
-    # 2. Роутер (резидент, EN)
+    # 2. Роутер (резидент, EN) + скоринг уверенности для триггера консилиума
     def _route():
         with HUB.gpu_lock:
             raw = generate(HUB.router, HUB.router_tok,
@@ -454,20 +500,51 @@ def case(req: CaseIn):
             return raw
     route_raw = step("route", _route)
     specialty = extract_specialty(route_raw)
+    scored = None
+    if CONSULT_MARGIN > 0:
+        def _route_score():
+            with HUB.gpu_lock:
+                out = score_specialties(case_en)
+                HUB.note_vram()
+                return out
+        scored = step("route_score", _route_score)
+
+    # Консилиум: при марже ≤ порога зовём top-1 и top-2 (максимум 2 — VRAM).
+    # Скоринг-топ-1 страхует от 422, если строка генерации не парсится.
+    consult = False
+    specialties: list[str] = []
+    if scored is not None:
+        s1, s2, margin = scored
+        if specialty is None:
+            specialty = s1
+        specialties = [specialty]
+        if margin <= CONSULT_MARGIN and s2 not in specialties:
+            specialties.append(s2)
+            consult = True
+    elif specialty is not None:
+        specialties = [specialty]
     if specialty is None:
         raise HTTPException(422, {"error": "роутер не выдал специальность",
                                   "router_raw": route_raw, "trace": trace})
     spec = BY_NAME[specialty]
 
-    # 3. Агент-специалист (lazy LRU=1, EN)
-    def _agent():
-        model, tok = HUB.agent_for(spec.slug)
-        system = AGENT_SYSTEM.format(spec_en=" / ".join(spec.names_en),
-                                     spec_ru=spec.name.lower())
-        return generate(model, tok,
-                        [{"role": "system", "content": system},
-                         {"role": "user", "content": case_en}])
-    preliminary_en = canonicalize_agent_output(step("agent", _agent))
+    # 3. Агенты-специалисты (lazy LRU=1, EN). Консилиум = последовательные
+    # вызовы: LRU сам выгружает предыдущего перед загрузкой следующего,
+    # порядок VRAM не меняется.
+    opinions: list[tuple[str, str]] = []   # (специальность, канонизированный выход)
+    for name in specialties:
+        aspec = BY_NAME[name]
+
+        def _agent(aspec=aspec):
+            model, tok = HUB.agent_for(aspec.slug)
+            system = AGENT_SYSTEM.format(spec_en=" / ".join(aspec.names_en),
+                                         spec_ru=aspec.name.lower())
+            return generate(model, tok,
+                            [{"role": "system", "content": system},
+                             {"role": "user", "content": case_en}])
+        opinions.append((name, canonicalize_agent_output(
+            step(f"agent:{aspec.slug}", _agent))))
+    preliminary_en = opinions[0][1]
 
     # 4. Слот мастер-агента: v2 — med-chief-3b (обученный синтез); v1 — проход
     # базовой Qwen «оформление+перевод» (пока chief не обучен).
@@ -477,16 +554,23 @@ def case(req: CaseIn):
     if HUB.ensure_chief():
 
         def _chief():
-            diag_m = re.search(r"###\s*Предварительный\s*диагноз\s*\n(.+)",
-                               preliminary_en, re.S)
-            diag_line = (diag_m.group(1).strip().split("\n")[0][:200]
-                         if diag_m else preliminary_en[:200])
-            reasoning_m = re.search(r"###\s*Рассуждение\s*\n(.+?)(?=\n###|\Z)",
-                                    preliminary_en, re.S)
-            notes = (reasoning_m.group(1).strip()[:600] + "…") if reasoning_m else ""
+            # пуля диагноза на каждого специалиста — формат обучен в data/chief
+            # (несколько мнений с указанием специальности); заметки — от top-1
+            bullets = []
+            notes = ""
+            for name, out in opinions:
+                diag_m = re.search(r"###\s*Предварительный\s*диагноз\s*\n(.+)",
+                                   out, re.S)
+                diag_line = (diag_m.group(1).strip().split("\n")[0][:200]
+                             if diag_m else out[:200])
+                bullets.append(f"- {diag_line} (preliminary diagnosis of a {name})")
+                if not notes:
+                    reasoning_m = re.search(r"###\s*Рассуждение\s*\n(.+?)(?=\n###|\Z)",
+                                            out, re.S)
+                    notes = (reasoning_m.group(1).strip()[:600] + "…") if reasoning_m else ""
             user = (f"Case findings:\n{case_en}\n\n"
                     f"Specialists' preliminary diagnoses:\n"
-                    f"- {diag_line} (preliminary diagnosis of a {specialty})\n"
+                    + "\n".join(bullets) + "\n"
                     + (f"Specialist's supporting notes: {notes}\n" if notes else "")
                     + "\nFormulate the final diagnosis.")
             with HUB.gpu_lock:
@@ -524,6 +608,9 @@ def case(req: CaseIn):
 
     return {
         "specialty": specialty,
+        "specialties": specialties,
+        "consult": consult,
+        "opinions": [{"specialty": n, "output_en": o} for n, o in opinions],
         "case_en": case_en,
         "preliminary_en": preliminary_en,
         "final_en": final_en if HUB.chief is not None else None,

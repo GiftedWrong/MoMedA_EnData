@@ -117,6 +117,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--n", type=int, default=200)
     ap.add_argument("--port", type=int, default=8010)
+    ap.add_argument("--out", default=None,
+                    help="имя отчёта в runs/ (по умолчанию E2E_REPORT.md)")
     args = ap.parse_args()
 
     cache = PROJECT_ROOT / CFG["data_processed"] / "e2e_ru_complaints.jsonl"
@@ -124,6 +126,11 @@ def main() -> None:
     complaints.sort(key=lambda r: r["specialty_gold"])  # меньше смен агента
 
     print(f"[2/3] Сквозной прогон {len(complaints)} случаев через /api/case ...")
+    # построчный дамп сырых ответов: датасет для внешнего судьи (judge_medgemma)
+    # и разбора ошибок; пишем с flush — прогресс по строкам, сбой не теряет хвост
+    dump_path = PROJECT_ROOT / CFG["runs_dir"] / \
+        (Path(args.out or "E2E_REPORT.md").stem + "_raw.jsonl")
+    dump = dump_path.open("w", encoding="utf-8")
     results = []
     t_start = time.time()
     for i, c in enumerate(complaints):
@@ -131,15 +138,34 @@ def main() -> None:
         try:
             r = post_case(args.port, c["text_ru"])
             ok_route = r["specialty"] == c["specialty_gold"]
+            # консилиум: сервер может вернуть specialties (top-1 + top-2 при
+            # малой марже роутера); без этого поля вырождается в [specialty]
+            specs = r.get("specialties") or [r["specialty"]]
+            ok_recall2 = c["specialty_gold"] in specs
+            consult = bool(r.get("consult"))
             ans = r.get("answer_ru", "")
             diag_block = ("Итоговый диагноз" in ans) or ("Предварительный диагноз" in ans)
             cjk = bool(_CJK_RE.search(ans))
             latin_leak = len(_LATIN_RE.findall(ans)) / max(len(ans), 1) > 0.10
-            results.append({"gold": c["specialty_gold"], "pred": r["specialty"],
-                            "ok": ok_route, "diag": diag_block, "cjk": cjk,
-                            "latin": latin_leak, "sec": time.time() - t0,
-                            "trace": r["trace"], "answer_ru": ans,
-                            "text_ru": c["text_ru"], "pathology": c["pathology"]})
+            row = {"gold": c["specialty_gold"], "pred": r["specialty"],
+                   "ok": ok_route, "ok2": ok_recall2, "consult": consult,
+                   "diag": diag_block, "cjk": cjk,
+                   "latin": latin_leak, "sec": time.time() - t0,
+                   "trace": r["trace"], "answer_ru": ans,
+                   "text_ru": c["text_ru"], "pathology": c["pathology"]}
+            results.append(row)
+            dump.write(json.dumps({
+                "gold": c["specialty_gold"], "pathology": c["pathology"],
+                "text_ru": c["text_ru"], "case_en": r.get("case_en"),
+                "specialty": r["specialty"], "specialties": specs,
+                "consult": consult,
+                "opinions": r.get("opinions"),
+                "preliminary_en": r.get("preliminary_en"),
+                "final_en": r.get("final_en"), "answer_ru": ans,
+                "latency_ms": r.get("latency_ms"),
+                "trace_ms": {t["step"]: t["ms"] for t in r.get("trace", [])},
+            }, ensure_ascii=False) + "\n")
+            dump.flush()
         except Exception as e:
             results.append({"gold": c["specialty_gold"], "pred": None, "ok": False,
                             "error": str(e), "sec": time.time() - t0})
@@ -149,35 +175,50 @@ def main() -> None:
             print(f"      {done}/{len(complaints)} · маршрут {acc*100:.0f}% · "
                   f"~{(time.time()-t_start)/done:.1f}с/случай")
 
+    dump.close()
+    print(f"[ok] сырой дамп: {dump_path}")
+
     print("[3/3] Отчёт ...")
     n = len(results)
     ok = sum(x["ok"] for x in results)
+    ok2 = sum(x.get("ok2") for x in results)
+    consults = [x for x in results if x.get("consult")]
+    plain = [x for x in results if not x.get("consult")]
     diag = sum(x.get("diag") for x in results)
     cjk = sum(x.get("cjk") for x in results)
     latin = sum(x.get("latin") for x in results)
     secs = [x["sec"] for x in results]
+    med = lambda xs: sorted(xs)[len(xs) // 2] if xs else float("nan")  # noqa: E731
     steps = collections.defaultdict(list)
     for x in results:
         for t in x.get("trace", []):
             steps[t["step"]].append(t["ms"])
-    by_class = collections.defaultdict(lambda: [0, 0])
+    by_class = collections.defaultdict(lambda: [0, 0, 0])
     for x in results:
-        by_class[x["gold"]][1] += 1
+        by_class[x["gold"]][2] += 1
         by_class[x["gold"]][0] += x["ok"]
+        by_class[x["gold"]][1] += x.get("ok2", x["ok"])
 
     lines = ["# Сквозной e2e-бенчмарк (RU жалоба → /api/case → RU ответ)", "",
              f"Случаев: {n} (DDXPlus evidences, переведены в RU offline, seed {SEED})",
              f"Сервер: 127.0.0.1:{args.port}", "",
-             f"**Маршрутизация end-to-end: {ok}/{n} = {ok/n*100:.1f}%**",
+             f"**Маршрутизация end-to-end (top-1): {ok}/{n} = {ok/n*100:.1f}%**",
+             f"**Recall@2 (золото среди вызванных специалистов): {ok2}/{n} = {ok2/n*100:.1f}%**",
+             f"- консилиумов (2 специалиста): {len(consults)}/{n} "
+             f"({len(consults)/max(n,1)*100:.0f}%)",
              f"- блок «Предварительный диагноз» в RU-ответе: {diag}/{n} ({diag/n*100:.0f}%)",
              f"- CJK-утечки в ответе: {cjk}/{n}; латиница >10%: {latin}/{n}",
-             f"- латентность: медиана {sorted(secs)[n//2]:.0f} с · средняя {sum(secs)/n:.0f} с",
+             f"- латентность: медиана {med(secs):.0f} с · средняя {sum(secs)/n:.0f} с"
+             + (f" · без консилиума {med([x['sec'] for x in plain]):.0f} с"
+                f" · с консилиумом {med([x['sec'] for x in consults]):.0f} с"
+                if consults and plain else ""),
              "", "## Латентность по шагам (медиана)", ""]
     for sname, vals in steps.items():
         lines.append(f"- {sname}: {sorted(vals)[len(vals)//2]/1000:.1f} с")
-    lines += ["", "## Маршрутизация по классам", ""]
-    for cls, (a, b) in sorted(by_class.items()):
-        lines.append(f"- {cls}: {a}/{b} ({a/max(b,1)*100:.0f}%)")
+    lines += ["", "## Маршрутизация по классам (top-1 / recall@2)", ""]
+    for cls, (a, a2, b) in sorted(by_class.items()):
+        lines.append(f"- {cls}: {a}/{b} ({a/max(b,1)*100:.0f}%) · "
+                     f"recall@2 {a2}/{b} ({a2/max(b,1)*100:.0f}%)")
     lines += ["", "## Сэмплы (по одному на класс)", ""]
     seen = set()
     for x in results:
@@ -187,7 +228,7 @@ def main() -> None:
         lines += [f"### {x['gold']} → {x['pred']} ({'✓' if x['ok'] else '✗'})",
                   f"**Жалоба (RU):** {x['text_ru'][:250]}", "",
                   f"**Ответ:** {x['answer_ru'][:500]}", "", "---", ""]
-    out = PROJECT_ROOT / CFG["runs_dir"] / "E2E_REPORT.md"
+    out = PROJECT_ROOT / CFG["runs_dir"] / (args.out or "E2E_REPORT.md")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"[ok] {out}")

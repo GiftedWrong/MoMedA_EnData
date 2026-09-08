@@ -46,6 +46,7 @@ curl -s localhost:8010/api/health | python3 -m json.tool
 | Поле | Смысл |
 |---|---|
 | `router` | какой роутер загружен (v2 приоритетнее, v1 — фолбэк) |
+| `consult_margin` | порог консилиума ln(p1/p2); 0 — выключено. Env `MOMEDA_CONSULT_MARGIN` перекрывает config.yaml |
 | `input_mt` | входной переводчик: MiLMMT (норма) / NLLB / Qwen(fallback) |
 | `chief` | loaded / available / not_trained |
 | `agent_current`, `agent_loads` | текущий LRU-агент и сколько раз грузились агенты |
@@ -63,11 +64,15 @@ curl -s -m 300 localhost:8010/api/case -H 'Content-Type: application/json' \
      -d '{"text": "Неделю болит горло, температура 38,5, налёт на миндалинах"}'
 ```
 
-Ответ: `specialty`, `case_en`, `preliminary_en` (агент), `final_en` (мастер),
+Ответ: `specialty` (top-1), `specialties` (при малой марже роутера —
+top-1 + top-2, тогда же `consult: true`), `case_en`, `preliminary_en`
+(агент top-1), `final_en` (мастер, взвешивает все мнения),
 `answer_ru`, `master` («chief»/«base_v1»), `latency_ms`, `trace` — тайминги и
 VRAM каждого шага. Латентность 15–40 с (первый случай новой специальности
-дороже — загрузка агента ~30 с). Ошибка 422 — роутер не выдал класс (текст
-слишком короткий/не медицинский).
+дороже — загрузка агента ~30 с; консилиум добавляет ~5–30 с — второй агент).
+Ошибка 422 — роутер не выдал класс (текст
+слишком короткий/не медицинский); при включённом консилиуме скоринг-топ-1
+страхует от 422.
 
 **POST /api/route — только маршрутизация** (EN-текст на вход):
 
@@ -162,6 +167,10 @@ bash scripts/unify_agents.sh
 # роутер: точность по классам × источникам, путаницы
 .venv/bin/python scripts/benchmark_router_en.py --model models/med-router-en-v2-3b
 
+# калибровка уверенности роутера: recall@2, порог консилиума (~10 мин GPU)
+.venv/bin/python scripts/router_confidence.py
+.venv/bin/python scripts/router_confidence.py --aggregate-only   # пересчёт отчёта без GPU
+
 # агент: формат, EN-чистота, MCQ; USMLE — внешний тест
 .venv/bin/python scripts/eval_specialist.py --specialty Терапевт --limit 100 \
     --usmle data/processed/usmle_pseudo_labeled.jsonl --usmle-limit 100
@@ -173,8 +182,10 @@ bash scripts/unify_agents.sh
 .venv/bin/python scripts/benchmark_e2e.py --n 200
 ```
 
-Отчёты: `runs/FINAL_METRICS.md`, `runs/E2E_REPORT.md` (+`_v1`),
-`data/processed/ROUTER_BENCHMARK.md`, `runs/eval_med-spec-*.md`.
+Отчёты: `runs/FINAL_METRICS.md`, `runs/E2E_REPORT.md` (+`_v1`,
++`E2E_CONSULT_REPORT.md`), `data/processed/ROUTER_BENCHMARK.md`,
+`data/processed/ROUTER_CONFIDENCE.md`, `runs/CONSULT_REPORT.md`,
+`runs/eval_med-spec-*.md`.
 
 ---
 
