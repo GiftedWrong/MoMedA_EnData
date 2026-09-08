@@ -238,7 +238,7 @@ def main() -> None:
 
         c = collections.Counter(r["source"] for r in pool)
         expl = sum(1 for r in pool if r.get("explanation_en"))
-        thin = " ⚠️ тонкий" if n < args.per_specialty * 0.5 else ""
+        thin = " ⚠️ тонкий" if n < 2000 else ""  # порог абсолютный, а не от цели
         report.append(f"| {spec.name}{thin} | {c['medmcqa']} | {c['medquad']} | {c['hcm_pseudo']} "
                       f"| {expl} ({expl / max(n, 1) * 100:.0f}%) | {len(train)}/{len(val)}/{len(test)} |")
         print(f"      {spec.name:18s} {len(train):5d}/{len(val):3d}/{len(test):3d} "
