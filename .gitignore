@@ -9,3 +9,4 @@ data/specialties/
 data/router/
 data/chief/
 data/processed/pool.jsonl
+unsloth_compiled_cache/
